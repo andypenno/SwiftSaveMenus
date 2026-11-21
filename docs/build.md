@@ -29,6 +29,6 @@ Swift Save Menus uses GPL-3.0-or-later. Each release includes the license and at
 
 ### Nexus Mods upload
 
-The Nexus job uses the same tested mod ZIP after GitHub publishes a release. Set `NEXUSMODS_API_KEY`, `NEXUSMODS_FILE_ID` (the unique ID of the existing main file's version chain) and `NEXUSMODS_MOD_ID` (the unique mod ID) as GitHub Actions repository secrets. The job verifies the archive hash and checks the chain on Nexus before uploading.
+The Nexus job uses the same tested mod ZIP after GitHub publishes a release. The `nexus` environment permits release tags and holds `NEXUSMODS_API_KEY`, `NEXUSMODS_FILE_ID` (the API File ID of the existing main file), and `NEXUSMODS_MOD_ID` (the unique mod ID). The job verifies the archive hash and checks the chain on Nexus before uploading.
 
 The job uploads each tagged release to the existing main chain and enables the download requirements popup. Requirements are managed on the Nexus mod page. [Nexus upload action](https://github.com/Nexus-Mods/upload-action) · [Nexus listing copy](nexus/description.bbcode)
