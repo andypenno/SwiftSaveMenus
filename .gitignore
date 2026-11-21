@@ -1,0 +1,11 @@
+/.build/
+/.xmake/
+/build/
+/compile_commands.json
+/PLAN.md
+/docs/plans/
+/tests/fixtures/deck/
+__pycache__/
+*.ess
+*.skse
+*.log

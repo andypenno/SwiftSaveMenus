@@ -1,0 +1,63 @@
+Have you ever tried to open your save menu or load your most recent save, only to end up waiting for the list to appear? I kept running into this on my most recent playthrough. At one point I was waiting 30 seconds just to see my saves. I made Swift Save Menus to cut that wait.
+
+Skyrim searches the save folder before it shows the list, so saves from one or more playthroughs can slow things down. If you use Mod Organizer 2, its virtual filesystem can add to the wait. And if you use rotating autosaves, old SKSE Cosaves can pile up even when the number of autosaves you see in game stays the same.
+
+[b]What I measured[/b]
+
+I tried opening Load from the pause menu before and after the fix. With around 250 saves in the baseline, Skyrim took [b]31.4 seconds[/b] to request the first save preview. With the fix, it took [b]0.58 seconds[/b].
+
+[img]https://raw.githubusercontent.com/andypenno/SwiftSaveMenus/main/docs/assets/pause-menu-load-timing.png[/img]
+
+I also timed just the search for save files. I used the same test folder for both runs, with around 250 saves and 10,000 orphaned SKSE Cosaves left in place. That search went from [b]5.02 seconds to 11.1 milliseconds[/b].
+
+[img]https://raw.githubusercontent.com/andypenno/SwiftSaveMenus/main/docs/assets/save-search-timing.png[/img]
+
+[b]Installation instructions[/b]
+
+1. Install the SKSE and Address Library builds for your Skyrim version.
+2. Install and enable the main Swift Save Menus ZIP in your mod manager. The same ZIP covers supported SE, AE, and VR versions.
+3. Launch Skyrim through SKSE.
+
+[b]Configuration[/b]
+
+Edit SKSE/Plugins/SaveLoadFix.ini before launching Skyrim. If you have SKSE Menu Framework, you can also open Swift Save Menus → Settings in game. Changes made there apply immediately and are saved for next time.
+
+[list]
+[*][b]EnableLogging[/b] (default 0). Set to 1 to write debug information and menu timings to SaveLoadFix.log in the SKSE log folder.
+[*][b]EnableCosavePruning[/b] (default 1). Checks for orphaned SKSE Cosaves in the background at startup and after saves. Set to 0 to turn cleanup off.
+[*][b]BackupPrunedCosaves[/b] (default 0). With pruning enabled, set to 1 to move eligible orphaned cosaves to a recovery folder. At 0, cleanup deletes them permanently. Set this before your first launch if you want backups from the start.
+[*][b]EnableSettingsMenu[/b] (default 1). Set to 0 in the INI before launch to hide the Swift Save Menus page in SKSE Menu Framework.
+[/list]
+
+[b]Main features[/b]
+
+[list]
+[*]Faster save lists. The mod speeds up finding saves for Load at the title screen and Save and Load in the pause menu.
+[*]Background cleanup. The mod checks for orphaned SKSE Cosaves at startup and after saves. By default, it permanently deletes eligible orphans. It leaves your saves and their matching cosaves alone. You can keep backups or turn cleanup off. If you use SSE Engine Fixes and want recovery copies, turn off its own cosave cleaner.
+[*]Optional in-game settings. If you use SKSE Menu Framework, open Swift Save Menus → Settings. Changes take effect right away and are saved for next time.
+[/list]
+
+[b]Requirements[/b]
+
+[list]
+[*][url=https://skse.silverlock.org/]SKSE[/url] for your exact Skyrim version. Use SKSE VR for Skyrim VR.
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SE and AE[/url] or [url=https://www.nexusmods.com/skyrimspecialedition/mods/58101]VR Address Library[/url].
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]SKSE Menu Framework[/url] if you want to change settings in game.
+[/list]
+
+[b]Shout-outs[/b]
+
+Thanks to the [url=https://skse.silverlock.org/]SKSE[/url] and [url=https://github.com/alandtse/CommonLibSSE-NG]CommonLibSSE-NG[/url] contributors whose work made this possible.
+
+If you're looking to improve the rest of Skyrim's save workflow, these are worth a look:
+
+[list]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/126776]Auto Saver[/url] schedules and rotates autosaves.
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/173161]Seamless Saving - Skyrim Save Accelerator[/url] reduces pauses while saving.
+[*][url=https://github.com/just-harry/save-load-accelerator-for-skse-cosaves/releases]Save & Load Accelerator for SKSE Cosaves[/url] speeds up SKSE Cosave reads and writes.
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/20406]SkyUI SE - Flashing Savegames Fix[/url] fixes flashing save entries if you use SkyUI.
+[/list]
+
+[b]Source and support[/b]
+
+Swift Save Menus is licensed under GPL-3.0-or-later. [url=https://github.com/andypenno/SwiftSaveMenus]GitHub repository[/url] · [url=https://github.com/andypenno/SwiftSaveMenus/releases/download/v0.1.0/SwiftSaveMenus-0.1.0-source.zip]Source for 0.1.0[/url] · [url=https://github.com/andypenno/SwiftSaveMenus/issues/new/choose]Report a bug[/url]
