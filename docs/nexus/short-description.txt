@@ -1,0 +1,1 @@
+Faster browsing for large Skyrim save collections, with optional cleanup for leftover SKSE Cosaves.

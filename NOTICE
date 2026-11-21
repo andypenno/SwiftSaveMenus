@@ -1,0 +1,9 @@
+Swift Save Menus
+Copyright (C) 2026 andypenno and contributors
+
+Swift Save Menus is licensed under GPL-3.0-or-later. See LICENSE.
+Source and build instructions: https://github.com/andypenno/SwiftSaveMenus
+
+The DLL includes CommonLibSSE-NG, licensed under GPL-3.0-or-later with
+additional permissions. Its upstream notices, license, and exceptions
+are included in the corresponding source under lib/commonlibsse-ng.

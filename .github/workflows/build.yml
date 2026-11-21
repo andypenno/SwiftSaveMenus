@@ -1,0 +1,234 @@
+name: Build, test, and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      commonlib:
+        description: CommonLib build mode
+        type: choice
+        options: [upstream, source]
+        default: upstream
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: ${{ inputs.commonlib == 'source' && 45 || 10 }}
+    env:
+      COMMONLIB_MODE: ${{ inputs.commonlib || 'upstream' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a # v1
+        with:
+          xmake-version: '3.0.6'
+      - name: Stage the upstream CommonLib library
+        if: env.COMMONLIB_MODE == 'upstream'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $commonlib = 'lib/commonlibsse-ng'
+          if ((git -C $commonlib rev-parse HEAD) -ne '8b48fb1b76d6ce9353af138d86037b4246c73527') {
+            throw 'Review the upstream archive pin for this CommonLib revision'
+          }
+          $bundle = 'commonlibsse-ng-prebuilt-v6.6.0-all-msvc'
+          $archive = Join-Path $env:RUNNER_TEMP "$bundle.7z"
+          Invoke-WebRequest "https://github.com/alandtse/CommonLibSSE-NG/releases/download/v6.6.0/$bundle.7z" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '84d7e9f2154adc9b77cfb210d0fedce179d8ab30c720c633f02fce56b4efa8a6') {
+            throw 'The upstream archive hash differs from the pinned release'
+          }
+          7z x $archive "-o$env:RUNNER_TEMP" "$bundle/lib/commonlibsse-ng.lib"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force "$commonlib/lib" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/$bundle/lib/commonlibsse-ng.lib" "$commonlib/lib/commonlibsse-ng.lib"
+      - name: Configure xmake and resolve dependency packages
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          # Use only the explicitly staged prebuilt and keep the source baseline cold.
+          Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+          Remove-Item Env:COMMONLIB_PREBUILT -ErrorAction SilentlyContinue
+          $config = @('-p','windows','-a','x64','-m','release','--toolchain=msvc','--vs=2026','--runtimes=MD','--skyrim_se=y','--skyrim_ae=y','--skyrim_vr=y','-o','.build','-v','-y')
+          Write-Host "CommonLib mode: $env:COMMONLIB_MODE. Image: $env:ImageVersion."
+          xmake f @config
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile CommonLib, plugin, and test targets
+        timeout-minutes: ${{ inputs.commonlib == 'source' && 38 || 4 }}
+        shell: pwsh
+        run: |
+          Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+          Remove-Item Env:COMMONLIB_PREBUILT -ErrorAction SilentlyContinue
+          xmake build --all --verbose --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package the candidate
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $version = [regex]::Match((Get-Content xmake.lua -Raw), 'set_version\("(\d+\.\d+\.\d+)"\)').Groups[1].Value
+          if (!$version) { throw 'Missing project version' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag differs from project version' }
+          $build = '.build/windows/x64/release'
+          python tools/package.py "$build/SwiftSaveMenus.dll" "candidate/SwiftSaveMenus-$version.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/package_source.py "candidate/SwiftSaveMenus-$version-source.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $file = Get-Item "candidate/SwiftSaveMenus-$version.zip"
+          (Get-FileHash $file.FullName -Algorithm SHA256).Hash | Set-Content candidate/sha256.txt
+          (Get-FileHash "candidate/SwiftSaveMenus-$version-source.zip" -Algorithm SHA256).Hash | Set-Content candidate/source-sha256.txt
+          New-Item -ItemType Directory candidate/tests | Out-Null
+          Copy-Item "$build/*-test.exe" candidate/tests
+          Get-ChildItem "$build/*.dll" -Exclude 'SwiftSaveMenus.dll' | Copy-Item -Destination candidate/tests
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: candidate
+          path: candidate
+          if-no-files-found: error
+
+  native-regressions:
+    runs-on: windows-2025
+    needs: build
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: candidate
+          path: candidate
+      - name: Verify candidate and run regressions
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem candidate/SwiftSaveMenus-*.zip -Exclude '*-source.zip'
+          python tests/artifact/check_package.py $zip.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/run_search_tests.py candidate/tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests/cosaves -v
+
+  package-integrity:
+    runs-on: windows-2025
+    needs: build
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: candidate
+          path: candidate
+      - name: Verify package contents, DLL exports, and hash
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem candidate/SwiftSaveMenus-*.zip -Exclude '*-source.zip'
+          $source = Get-Item candidate/SwiftSaveMenus-*-source.zip
+          if ((Get-FileHash $zip.FullName -Algorithm SHA256).Hash -ne (Get-Content candidate/sha256.txt)) { throw 'Candidate ZIP hash differs' }
+          if ((Get-FileHash $source.FullName -Algorithm SHA256).Hash -ne (Get-Content candidate/source-sha256.txt)) { throw 'Source ZIP hash differs' }
+          python tests/artifact/check_package.py $zip.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests/artifact -v
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [native-regressions, package-integrity]
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release commit is on main
+        shell: pwsh
+        run: |
+          git merge-base --is-ancestor $env:GITHUB_SHA HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to a commit on main' }
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: candidate
+          path: candidate
+      - name: Publish the tested ZIP
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem candidate/SwiftSaveMenus-*.zip -Exclude '*-source.zip'
+          $source = Get-Item candidate/SwiftSaveMenus-*-source.zip
+          if ((Get-FileHash $zip.FullName -Algorithm SHA256).Hash -ne (Get-Content candidate/sha256.txt)) { throw 'Candidate ZIP hash differs' }
+          if ((Get-FileHash $source.FullName -Algorithm SHA256).Hash -ne (Get-Content candidate/source-sha256.txt)) { throw 'Source ZIP hash differs' }
+          gh release create $env:GITHUB_REF_NAME $zip.FullName $source.FullName --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes
+
+  nexus:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: nexus
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: candidate
+          path: candidate
+      - name: Verify the ZIP and Nexus file chain
+        id: verify
+        shell: bash
+        env:
+          NEXUSMODS_API_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+          NEXUSMODS_FILE_ID: ${{ secrets.NEXUSMODS_FILE_ID }}
+          NEXUSMODS_MOD_ID: ${{ secrets.NEXUSMODS_MOD_ID }}
+        run: |
+          : "${NEXUSMODS_API_KEY:?Set the Nexus API key}"
+          : "${NEXUSMODS_FILE_ID:?Set the Nexus main file chain ID}"
+          : "${NEXUSMODS_MOD_ID:?Set the Nexus unique mod ID}"
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          zip="candidate/SwiftSaveMenus-$version.zip"
+          expected=$(tr -d '\r\n' < candidate/sha256.txt)
+          printf '%s  %s\n' "$expected" "$zip" | sha256sum --check
+
+          api=https://api.nexusmods.com/v3
+          curl --fail --silent --show-error --max-time 30 -H "apikey: $NEXUSMODS_API_KEY" "$api/mods/$NEXUSMODS_MOD_ID/files" |
+            jq -e --arg id "$NEXUSMODS_FILE_ID" 'any(.data.mod_files[]; .id == $id and .is_active == true)' >/dev/null ||
+            { echo 'The configured file chain is inactive or could not be verified on the configured Nexus mod.'; exit 1; }
+          versions=$(curl --fail --silent --show-error --max-time 30 -H "apikey: $NEXUSMODS_API_KEY" "$api/mod-files/$NEXUSMODS_FILE_ID/versions")
+          jq -e 'any(.data.versions[]; .category == "main")' <<< "$versions" >/dev/null ||
+            { echo 'Nexus could not verify an existing main file in the configured chain.'; exit 1; }
+          printf 'version=%s\nzip=%s\n' "$version" "$zip" >> "$GITHUB_OUTPUT"
+      - name: Publish the tested ZIP to Nexus Mods
+        uses: Nexus-Mods/upload-action@98532f7670c27cbecc78fae03fa3e278147827e2 # v1.0.0-beta.11
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ secrets.NEXUSMODS_FILE_ID }}
+          filename: ${{ steps.verify.outputs.zip }}
+          version: ${{ steps.verify.outputs.version }}
+          display_name: Swift Save Menus
+          category: main
+          primary_mod_manager_download: 'true'
+          allow_mod_manager_download: 'true'
+          show_requirements_pop_up: 'true'
+          update_mod_version: 'true'
+          archive_existing_version: 'false'
